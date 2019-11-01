@@ -1,6 +1,6 @@
 #!/bin/bash
 ###############################################################
-# Loop through subscriptions for foreign tenants 
+# Loop through subscriptions for foreign tenants
 # and Lighthouse delegations and check PAL is assigned
 ###############################################################
 
@@ -10,10 +10,14 @@ incr=true
 
 error()
 {
-  printf "ERROR: ${@:-Exiting.}\n" >> $PAL_LOGFILE
+  printf "ERROR: ${@:-Exiting.} ($(date +%T))\n" >> $PAL_LOGFILE
+
   tput setaf 1
-  printf "ERROR: ${@:-Exiting.}\n" >&2 
+  printf "ERROR: ${@:-Exiting.}\n" >&2
   tput sgr0
+
+  # Revert back to default subscription
+  [[ -n "$defaultSubscriptionId" ]] && az account set --subscription $defaultSubscriptionId
   exit 1
 }
 
@@ -23,7 +27,7 @@ info()
   $verbose || return
 
   tput setaf 6
-  printf "$@\n" >&2 
+  printf "$@\n" >&2
   tput sgr0
   return
 }
@@ -37,8 +41,8 @@ umask 022
 [[ ! -d ~/.pal ]] && mkdir -m 755 ~/.pal
 [[ ! -d ~/.pal/logs ]] && mkdir -m 755 ~/.pal/logs
 [[ ! -d ~/.pal/creds ]] && mkdir -m 755 ~/.pal/creds
-info "Starting $(basename $0) on $(date +%F) at $(date +%R)"
- 
+info "Starting $(basename $0) on $(date +%F) at $(date +%T)\n"
+
 
 # Check that az and jq are installed and ensure that the managementpartners extension has been added
 
@@ -55,18 +59,26 @@ else
   read mpnId
   [[ -z "$mpnId" ]] && error "Empty MPN ID"
   re='^[0-9]+$'
-  [[ $mpnId =~ $re ]] || error "MPN ID is not numeric"
+  [[ $mpnId =~ $re ]] || error "MPN ID isn\'t numeric"
+  info "MPN ID $mpnId entered"
 fi
 
-# Grab the list of tenantIds and subscriptionIds
-[[ -z "$tenants" ]] && tenants=$(az account list --query "[].[tenantId]" --output tsv | sort -u)
+# Grab the list of tenantIds and subscriptionIds, determine default. Use jq for speed.
+# defaultSubscriptionId=$(az account list --output tsv --query "[?isDefault].id")
+# [[ -z "$tenants" ]] && tenants=$(az account list --query "[].[tenantId]" --output tsv | sort -u)
+
+accounts=$(az account list --output json) || error "Not logged in?"
+defaultSubscriptionId=$(jq -r '.[]|select(.isDefault).id' <<< $accounts)
+[[ -z "$tenants" ]] && tenants=$(jq -r '.[].tenantId' <<< $accounts | sort -u)
+
+# Loop through the list, check for existing link or create a new one
 
 for tenant in $tenants
 do
   info "\nChecking tenant $tenant"
 
   tenantFile=~/.pal/creds/$tenant
-  if [ $incr -a -s $tenantFile ] 
+  if [ $incr -a -s $tenantFile ]
   then
     principalId=$(find ~/.pal/creds -lname $tenant -exec basename {} \;)
     info "  principalId:    $principalId"
@@ -74,22 +86,22 @@ do
     continue
   fi
 
-  # Check that we have the extension
+  # Check that we have the extension - moved into the loop so that the check is usually skipped , again for speed
 
   if [[ -n "$AZ_EXTENSION" ]]
   then : # For speed
-  elif az extension show --name managementpartner > /dev/null 2>&1 
-  then 
+  elif az extension show --name managementpartner > /dev/null 2>&1
+  then
     AZ_EXTENSION=true
   else
-    info "Adding the missing managementpartner CLI extension" 
+    info "Adding the missing managementpartner CLI extension"
     az extension add --name managementpartner && AZ_EXTENSION=true
   fi
 
   # PAL needs to be associated per tenant, or more specifically per set of credentials for this user (1:1)
   # Switch context to the first subscription for the tenant
   subscriptionId=$(az account list --query "[?tenantId == '$tenant'].id | sort(@)[0]" --output tsv)
-  az account set --subscription $subscriptionId || error "Could not switch subscription to $subscriptionId"  
+  az account set --subscription $subscriptionId || error "Could not switch subscription to $subscriptionId"
 
   # Work out who we are logged on as and the tenantId in case tenant is a string rather vthan a GUID
   principalId=$(az ad signed-in-user show --query userPrincipalName --output tsv)
@@ -101,13 +113,13 @@ do
   info "  principalId:    $principalId"
 
   if existingPartnerId=$(az managementpartner show --query partnerId --output tsv 2>/dev/null)
-  then 
+  then
     info "  mpnId:          $existingPartnerId (existing)"
     echo "$existingPartnerId" > $tenantFile && ln -s $(basename $tenantFile) $idSymLink
   else
-    if az managementpartner create --partner-id $mpnId > /dev/null 
+    if az managementpartner create --partner-id $mpnId > /dev/null
     then
-      info "  mpnId:          $mpnId"
+      info "  mpnId:          $mpnId (new)"
       echo "$mpnId" > $tenantFile && ln -s $(basename $tenantFile) $idSymLink
     else
       error "Failed to link $principalId to MPN ID $mpnId."
@@ -118,19 +130,22 @@ done
 # Save the MPN ID
 
 if [[ ! -f ~/.pal/mpnId ]]
-then 
+then
   echo "$mpnId" > ~/.pal/mpnId
-  info "Saved $mpnId to ~/.pal/mpnId file."
+  info "\nSaved $mpnId to ~/.pal/mpnId file."
 elif [[ "x$(cat ~/.pal/mpnId)" != "x${mpnId}" ]]
 then
   echo "$mpnId" > ~/.pal/mpnId
-  info "Replaced $(cat ~/.pal/mpnId) with $mpnId in ~/.pal/mpnId file."
+  info "\nReplaced $(cat ~/.pal/mpnId) with $mpnId in ~/.pal/mpnId file."
 fi
 
 
 # Remove log files older than 28 days
 find ~/.pal/logs -name "*.log" -type f -mtime +28 -exec rm -f {} \;
 
+# Revert back to default subscription
+az account set --subscription $defaultSubscriptionId
+
 # End
-info "\nComplete."
+info "\nCompleted at $(date +%T)"
 exit 0
