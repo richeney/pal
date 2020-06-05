@@ -1,5 +1,3 @@
-# TO BE UPDATED
-
 # Automated PAL linking script
 
 This script can be called from ~/.bashrc to automate some Partner Admin Link activities for a signed in user.
