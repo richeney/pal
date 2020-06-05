@@ -1,3 +1,5 @@
+# TO BE UPDATED
+
 # Automated PAL linking script
 
 This script can be called from ~/.bashrc to automate Partner Admin Link for a signed in user.  It will efficiently check that all visible tenancies are linked so that it does not unnecessarily slow down user logon times.
