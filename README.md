@@ -1,6 +1,6 @@
 # Automated PAL linking script
 
-This script can be called from ~/.bashrc to automate Partner Admin Link for a signed in user.  It will efficiently check that all visible tenancies are linked so that it does not unnecessarily slow down user logon times.
+This script can be called from ~/.bashrc to automate some Partner Admin Link activities for a signed in user.
 
 ## Background
 
@@ -8,7 +8,7 @@ This script can be called from ~/.bashrc to automate Partner Admin Link for a si
 
 1. Guest Users, i.e. Azure Active Directory Business to Business (AAD B2B) access
 1. Service Principals (including Managed Identities)
-1. Directory Accounts, i.e. "guest" accounts created in the customer tenancy
+1. Directory Accounts, i.e. standard user principals created in the customer tenancy and provided to the partner
 1. Azure Lighthouse authorizations
 
 These various routes differ slightly, so refer to the [access methods](#access-methods) section below for more detail.
@@ -24,7 +24,11 @@ curl -H 'Cache-Control: no-cache' -sSL https://raw.githubusercontent.com/richene
 chmod 755 pal.sh
 ```
 
-You script should first be run interactively.
+The script requires both az and jq. It can be run in the Cloud Shell which includes both commands.
+
+## Execution
+
+Run the script interactively:
 
 ```bash
 ./pal.sh
@@ -32,23 +36,32 @@ You script should first be run interactively.
 
 You will be prompted for the MPN ID which will be saved to the ~/.pal folder.
 
-After the initial run then you can add a line to your profile e.g.
+It will loop through the tenants listed in the `az account list` output and will link in each of those, unless an existing link exists. The script covers:
 
-```bash
-cat >> ~/.bashrc << EOF
+1. Guest Users
+1. Azure Lighthouse authorizations (i.e. home tenant)
 
-## Link the signed-in-user to the MPN ID in ~/.pal/mpnId
-~/pal.sh 2>/dev/null
-EOF
-```
+It will also loop through any service principals that are visible in the az account list, and prompt for the secret to authenticate into that context and link. It will check for (and report on) existing links. If successful then a file will be stored in the ~/.pal area and subsequent executions of the command will skip past for speed. (Delete the relevant files in ~/.pal/service_principals if you want to refresh.)
 
-The current version is simple, but future versions will have additional switches to control the verbosity, refresh, set alternate MPN IDs, or to define a reduced tenancy list.
+## Limitations
 
-## ~/.pal
+This is a script to be run by each admin user. It cannot loop through and impersonate other users. Link multiple admin IDs for coverage.
 
-The ~/.pal hidden folder is created for speed of execution. The MPN ID is stored here, and four weeks of log files are retained.
+It does not currently handle
 
-The files and symlinks in the ~/.pal/creds folder are used to store user principal to MPN ID information per tenant. This is both for existing links that are discovered and for newly created links.
+1. Service Principals, except those visible in the `az account list` output
+1. Directory Accounts, i.e. standard user principals created in the customer tenancy and provided to the partner
+
+See [Access Methods](access-methods) below for more detail.
+
+## Future plans
+
+It is planned to:
+
+* Allow JSON inputs of additional directory accounts and service principals to link
+* Authenticate interactively, or provide passwords or secrets via protected files (700) or Key Vault Secrets
+* Create a set of JSON output files containing upn, objectId, tenantId etc.
+* Publish the files into Cosmos DB to allow reporting of linked IDs
 
 ## Access Methods
 
